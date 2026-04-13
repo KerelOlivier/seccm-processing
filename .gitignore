@@ -5,6 +5,9 @@ build/
 dist/
 wheels/
 *.egg-info
-
+*.avi
+*.csv
+*.png
+data/
 # Virtual environments
 .venv
