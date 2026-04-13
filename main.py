@@ -355,11 +355,16 @@ def plotMeasurements(df, cpts, path):
     plt.savefig(path)
 
 
+
+
 def main():
+    logger = logging.getLogger("main")
+
     path = sys.argv[1]
     out_dir = os.path.basename(path).split('.')[0]
-    logger = logging.getLogger("main")
-    logger.info(f"output: {out_dir}")
+    
+    logger.info(f"outputting files into: {out_dir}")
+    
     measurements = analyseVideo(path)
     df = measurements2dataframe(measurements)
     df = processMeasurements(df)
@@ -371,5 +376,8 @@ def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        datefmt="%y-%m-%d %H:%M:%S",
+        level=logging.INFO)
     main()
