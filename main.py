@@ -71,12 +71,13 @@ def getIntensity(labels, source):
     return res
 
 
-def analyseVideo(path):
+def analyseVideo(path, out_dir):
     """
     Analyses the video frames
 
     Params:
         path: The path to the video source (must be an MJPG)
+        out_dir: The path to the video output directory
     """
     measurements = []
     logger = logging.getLogger("processing.video")
@@ -101,7 +102,7 @@ def analyseVideo(path):
     )
 
     fourcc = cv.VideoWriter_fourcc(*"MJPG")
-    out = cv.VideoWriter("output.avi", fourcc, fps, (width, height))
+    out = cv.VideoWriter(f"{out_dir}/output.avi", fourcc, fps, (width, height))
 
     # Centroid tracking variables
     cid_cnt = 1
@@ -359,20 +360,30 @@ def plotMeasurements(df, cpts, path):
 
 def main():
     logger = logging.getLogger("main")
-
-    path = sys.argv[1]
-    out_dir = os.path.basename(path).split('.')[0]
     
+    path = sys.argv[1]
+
+    # Create output directory if it doesn't already exist
+    out_dir = os.path.basename(path).split('.')[0]
+    if not os.path.exists(out_dir):
+        os.mkdir(out_dir)
+
+    if not os.path.isdir(out_dir):
+        logger.critical("Unable to create output directory, already exists")
+        exit(1)
+
     logger.info(f"outputting files into: {out_dir}")
     
-    measurements = analyseVideo(path)
+    measurements = analyseVideo(path, out_dir)
     df = measurements2dataframe(measurements)
     df = processMeasurements(df)
-    df.write_csv("data.csv")
+    df.write_csv(f"{out_dir}/data.csv")
+    logger.info("Saved data csv")
 
     cpts = detectChangepoints(df, ["area_mean", "intensity_mean"])
 
-    plotMeasurements(df, cpts, "plots.png")
+    plotMeasurements(df, cpts, f"{out_dir}/plots.png")
+    logger.info("Saved plots")
 
 
 if __name__ == "__main__":
