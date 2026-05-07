@@ -75,27 +75,6 @@ def getIntensity(labels, source):
 
     return res
 
-def findOptimalThreshold(frames, window_size = 11):
-    # Calculate the histograms and determine the minimum threshold
-
-    res = 255
-    prev = None
-    for frame in tqdm(frames):
-        hist = cv.calcHist([frame], [0], None, [256], [0,256]).flatten()
-        hist = np.convolve(hist, np.ones(window_size)/window_size, mode='same')
-        pks = sps.find_peaks(hist, prominence=50, distance=10, width=5)
-        widths = pks[1]["widths"]
-        pks = pks[0]
-        if(len(pks)) < 2: 
-            threshold = 255 if prev == None else prev
-        else:
-            threshold = pks[-1] - widths[-1] * 2
-
-        prev = threshold
-        res = min(threshold, res)
-    return res
-
-
 def analyseVideo(path, out_dir):
     """
     Analyses the video frames
@@ -104,9 +83,7 @@ def analyseVideo(path, out_dir):
         path: The path to the video source (must be an MJPG)
         out_dir: The path to the video output directory
     """
-    measurements = []
-    logger = logging.getLogger("processing.video")
-
+    logger = logging.getLogger("analyse video")
     # Load video
     src_path = sys.argv[1]
     cap = cv.VideoCapture(src_path)
@@ -126,19 +103,19 @@ def analyseVideo(path, out_dir):
         f"\tnumber of frames {frame_count}"
     )
 
+
     fourcc = cv.VideoWriter_fourcc(*"MJPG")
     out = cv.VideoWriter(f"{out_dir}/output.avi", fourcc, fps, (width, height))
-
-    # Read and preprocess frames
-    frames = [cap.read()[1] for i in range(frame_count)]
-    grayscale = [cv.cvtColor(frame, cv.COLOR_BGR2GRAY) for frame in frames]
-    denoised = [cv.GaussianBlur(frame, (9,9), 0) for frame in grayscale]
     
-    # determine threshold
-    thresh = findOptimalThreshold(denoised)
-    
-    logger.info(f"Found optimal threshold at: {thresh}")
+    frames = np.array([cap.read()[1] for i in range(frame_count)])
+    gray = [cv.cvtColor(frame, cv.COLOR_BGR2GRAY) for frame in frames]
 
+    window = 7
+
+    histogram = []
+    peaks = []
+
+    measurements = []
 
     # Centroid tracking variables
     cid_cnt = 1
@@ -147,16 +124,38 @@ def analyseVideo(path, out_dir):
     # Tracks at what frame each id is made
     id2start = dict()
 
-    # Loop over each frame and analyse the data
-    for i in tqdm(range(len(frames))):
-        # Denoise
 
-        threshold = np.zeros_like(denoised[i])
-        threshold[denoised[i] > thresh] = 255
+    for i in tqdm(range(window//2, frame_count - window//2)):
+        frame = gray[i]
+        m = np.median(gray[i - window//2:i+window//2], axis=0).astype(np.uint8)
+
+        denoised = cv.bilateralFilter(m, 9, 75, 75)
+
+        # Determine thresholding
+        hist = cv.calcHist([denoised], [0], None, [256], [0,256]).flatten()
+        hist = np.convolve(hist, np.ones(11)/11, mode='same')
+        pks = sps.find_peaks(hist, prominence=200, distance=10, width=10)
+        widths = pks[1]["widths"]
+        pks = pks[0]
+        if(len(pks)) != 2: 
+            pks = [pks[0], 255]
+            widths = [widths[0],0]
+            
+
+        peaks.append(pks)
+        
+        # Threshold values
+        mask = np.zeros_like(frame)
+        mask[denoised > pks[1] - widths[1] * 2] = 255
+        mask = cv.threshold(denoised, 0, 255,
+                     cv.THRESH_BINARY + cv.THRESH_OTSU)[1]
+        mask[denoised < pks[0] + widths[0]] = 0
+
+        histogram.append(hist)
 
         # Labeling of the blobs
         num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(
-            threshold
+            mask
         )
         
         # remove all labels that are not fully in frame and set them to 0
@@ -170,12 +169,13 @@ def analyseVideo(path, out_dir):
                 labels[labels == lbl] = 0
 
         # Create a binary mask, with values 0 and 255
-        mask = np.zeros_like(threshold)
+        mask = np.zeros_like(mask)
         mask[labels > 0] = 255
 
         # Calculate stats
+
         areas = getAreas(labels)
-        intens = getIntensity(labels, denoised[i])
+        intens = getIntensity(labels, denoised)
 
         # track centroids
         lbls = np.unique(labels)  # Unique labels
@@ -209,13 +209,14 @@ def analyseVideo(path, out_dir):
                 measurements.append(Measurement(cid_cnt, i, areas[lbl], intens[lbl]))
                 id2start[cid_cnt] = i
                 cid_cnt += 1
+        
 
         # Video
         centroid_ids = new_cids
         label_bgr = cmap[np.uint8(ids % len(cmap))]
 
         # blend overlay with original source
-        coloured = cv.cvtColor(denoised[i], cv.COLOR_GRAY2BGR)
+        coloured = cv.cvtColor(frame, cv.COLOR_GRAY2BGR)
 
         green_mask = cv.bitwise_and(label_bgr, label_bgr, mask=mask)
 
@@ -240,15 +241,30 @@ def analyseVideo(path, out_dir):
                 2,
             )
 
-        # Save the frame
-        """
-        label_bgr = cmap[np.uint8(np.ones_like(ids))]
-        mask = threshold
-        mask[mask == 255] = 1
-        green_mask = cv.bitwise_and(label_bgr, label_bgr, mask=mask)
-        output = cv.addWeighted(cv.cvtColor(grayscale, cv.COLOR_GRAY2BGR), 1.0, green_mask, 0.5, 0)
-            """
+
+
+        
         out.write(output)
+
+            
+    # plot histogram
+    histogram = np.array(histogram)
+    peak_img = np.zeros_like(histogram)
+    print(len(peaks))
+    peaks = np.array(peaks)
+    for i, pks in enumerate(peaks):
+        freqs = np.floor(pks).astype(np.int32)
+        peak_img[i, freqs] = 1
+
+    plt.imshow(
+        histogram.T,
+        aspect = 'auto',
+        origin = 'lower',
+        cmap = 'viridis'
+    )
+    plt.colorbar()
+    plt.savefig(f"{out_dir}/histogram.png")
+
 
     cap.release()
     out.release()
@@ -608,5 +624,5 @@ if __name__ == "__main__":
         format="%(asctime)s | %(levelname)s | %(message)s",
         datefmt="%y-%m-%d %H:%M:%S",
         level=logging.INFO)
-    test(sys.argv[1])
-    #main()
+    #test(sys.argv[1])
+    main()
