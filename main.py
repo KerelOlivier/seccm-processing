@@ -1,50 +1,14 @@
 import scipy.signal as sps
-import scipy as sc
 import polars as pl
 import matplotlib.pyplot as plt
 import numpy as np
 import cv2 as cv
-import cv2.ximgproc as xip
 import sys
 import os
 import logging
 from tqdm import tqdm
-import ruptures as rpt
 from dataclasses import dataclass, asdict
-from sklearn.mixture import GaussianMixture
-from collections import deque
-
 import argparse
-
-cmap = np.array(
-    [
-        (28, 26, 228),  # #e41a1c
-        (184, 126, 55),  # #377eb8
-        (74, 175, 77),  # #4daf4a
-        (163, 78, 152),  # #984ea3
-        (0, 127, 255),  # #ff7f00
-        (51, 255, 255),  # #ffff33
-        (40, 86, 166),  # #a65628
-        (191, 129, 247),  # #f781bf
-        (153, 153, 153),  # #999999
-    ],
-    dtype=np.uint8,
-)
-
-plt_cmap = np.array(
-    [
-        "#e41a1c",
-        "#377eb8",
-        "#4daf4a",
-        "#984ea3",
-        "#ff7f00",
-        "#ffff33",
-        "#a65628",
-        "#f781bf",
-        "#999999",
-    ]
-)
-
 
 @dataclass
 class Measurement:
@@ -126,6 +90,8 @@ def analyseVideo(path, out_dir):
     # Tracks at what frame each id is made
     id2start = dict()
 
+    pks_cnt = []
+
 
     for i in tqdm(range(window//2, frame_count - window//2)):
         frame = gray[i]
@@ -139,6 +105,7 @@ def analyseVideo(path, out_dir):
         pks = sps.find_peaks(hist, prominence=200, distance=10, width=10)
         widths = pks[1]["widths"]
         pks = pks[0]
+        pks_cnt.append(len(pks))
         if(len(pks)) != 2: 
             pks = [pks[0], 255]
             widths = [widths[0],0]
@@ -251,6 +218,14 @@ def analyseVideo(path, out_dir):
     cap.release()
     out.release()
 
+    # Plot the peaks
+    fig, ax = plt.subplots(1, 1);
+    
+    ax.plot(np.arange(len(pks_cnt)), pks_cnt)
+
+    fig.savefig(f"{out_dir}/peaks.png", dpi=300)
+
+
     # plot histogram
     histogram = np.array(histogram)
     peak_img = np.zeros_like(histogram)
@@ -280,7 +255,7 @@ def analyseVideo(path, out_dir):
     ax.set_xlabel("time (s)")
     ax.set_ylabel("intensity")
     fig.colorbar(im, ax=ax)
-    fig.savefig(f"{out_dir}/histogram.png")
+    fig.savefig(f"{out_dir}/histogram.png", dpi=300)
 
 
     logger.info("Saved video")
@@ -304,41 +279,6 @@ def processMeasurements(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     return df
-
-def detectChangepoints(df: pl.DataFrame, cols: list[str]):
-    logger = logging.getLogger("chd")
-    res = pl.DataFrame()
-
-    for lbl in df["id"].unique():
-        for col in cols:
-            df_sub = df.filter(pl.col("id") == lbl).sort("time")
-
-            if len(df_sub) < 25 : 
-                continue
-
-            # Changepoint detection
-            model = "rbf"
-            algo = rpt.Pelt(model=model, min_size=50, jump=20).fit(
-                df_sub[col].to_numpy()
-            )
-            penalty = 50 * np.log(len(df_sub))
-            changepoints = np.array(algo.predict(pen=penalty))
-            cp_times = df_sub["time"][changepoints[:-1]]
-
-            if len(cp_times > 0):
-                row = pl.DataFrame(
-                    {
-                        "id": [lbl] * len(cp_times),
-                        "col": [col] * len(cp_times),
-                        "changepoints": cp_times,
-                    }
-                )
-
-                if len(res) > 0:
-                    res = res.extend(row)
-                else:
-                    res = row
-    return res
 
 def plotMeasurements(df, cpts, path):
     fig, axes = plt.subplots(2, 1, figsize=(10, 10))
