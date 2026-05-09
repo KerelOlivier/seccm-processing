@@ -10,6 +10,9 @@ from tqdm import tqdm
 from dataclasses import dataclass, asdict
 import argparse
 
+from src.colour import okabe_ito
+from src.video import highlight_blob, draw_centroids
+
 @dataclass
 class Measurement:
     id: int = 0
@@ -180,39 +183,12 @@ def analyseVideo(path, out_dir):
                 cid_cnt += 1
         
 
-        # Video
         centroid_ids = new_cids
-        label_bgr = cmap[np.uint8(ids % len(cmap))]
 
-        # blend overlay with original source
-        coloured = cv.cvtColor(frame, cv.COLOR_GRAY2BGR)
+        # Video
+        output = highlight_blob(frame, ids, mask)
+        output = draw_centroids(output, centroids, lbls)
 
-        green_mask = cv.bitwise_and(label_bgr, label_bgr, mask=mask)
-
-        alpha = 0.4
-        output = cv.addWeighted(coloured, 1.0, green_mask, alpha, 0)
-
-        for j, lbl in enumerate(lbls):
-            if j == 0:
-                continue
-            c = centroids[lbl]
-            output = cv.circle(
-                output, (int(c[0]), int(c[1])), 5, (j * 70, 0, j * 70), -1
-            )
-            area = stats[lbl, cv.CC_STAT_AREA]
-            output = cv.putText(
-                output,
-                str(area),
-                (int(c[0]), int(c[1])),
-                cv.FONT_HERSHEY_SIMPLEX,
-                1,
-                (255, 0, 0),
-                2,
-            )
-
-
-
-        
         out.write(output)
 
     cap.release()
@@ -291,7 +267,7 @@ def plotMeasurements(df, cpts, path):
 
     for lbl in df["id"].unique():
 
-        lbl_color = plt_cmap[lbl%len(plt_cmap)]
+        lbl_color = okabe_ito[lbl%len(okabe_ito)].hex()
         df_sub = df.filter(pl.col("id") == lbl)
 
 
