@@ -11,16 +11,29 @@ class Colour:
         self.b = b
     
     def rgb(self):
+        """
+        The Seperate RGB colour values
+
+        Returns:
+            The seperate RGB colour values in tuple form
+        """
         return (self.r, self.g, self.b)
     
     def hex(self):
+        """
+        The hexcode respresentation of the colour
+
+        Returns:
+            The hex colour as a string
+        """
         r = hex(self.r)
         g = hex(self.g)
         b = hex(self.b)
 
         return f"#{r}{g}{b}"
 
-cmap = [
+# The Okabe ito colourblind colour space
+okabe_ito = [
         Colour(28, 26, 228),  # #e41a1c
         Colour(184, 126, 55),  # #377eb8
         Colour(74, 175, 77),  # #4daf4a
