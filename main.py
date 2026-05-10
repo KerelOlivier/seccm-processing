@@ -11,7 +11,8 @@ from dataclasses import dataclass, asdict
 import argparse
 
 from src.colour import okabe_ito
-from src.video import highlight_blob, draw_centroids
+from src.video import *
+from src.frame_processing import *
 
 @dataclass
 class Measurement:
@@ -20,7 +21,6 @@ class Measurement:
     area: float = 0.0
     intensity: float = 0.0
 
-
 def getAreas(labels):
     """
     Calculates the area of a connected component in pixels
@@ -28,7 +28,6 @@ def getAreas(labels):
 
     values, counts = np.unique(labels, return_counts=True)
     return dict(zip(values, counts))
-
 
 def getIntensity(labels, source):
     """
@@ -72,7 +71,6 @@ def analyseVideo(path, out_dir):
         f"\tnumber of frames {frame_count}"
     )
 
-
     fourcc = cv.VideoWriter_fourcc(*"MJPG")
     out = cv.VideoWriter(f"{out_dir}/highlighted.avi", fourcc, fps, (width, height))
     
@@ -82,7 +80,6 @@ def analyseVideo(path, out_dir):
     window = 7
 
     histogram = []
-    peaks = []
 
     measurements = []
 
@@ -102,28 +99,17 @@ def analyseVideo(path, out_dir):
 
         denoised = cv.bilateralFilter(m, 9, 75, 75)
 
-        # Determine thresholding
-        hist = cv.calcHist([denoised], [0], None, [256], [0,256]).flatten()
-        hist = np.convolve(hist, np.ones(11)/11, mode='same')
-        pks = sps.find_peaks(hist, prominence=200, distance=10, width=10)
-        widths = pks[1]["widths"]
-        pks = pks[0]
-        pks_cnt.append(len(pks))
-        if(len(pks)) != 2: 
-            pks = [pks[0], 255]
-            widths = [widths[0],0]
-            
-
-        peaks.append(pks)
-        
-        # Threshold values
-        mask = np.zeros_like(frame)
-        mask[denoised > pks[1] - widths[1] * 2] = 255
-        mask = cv.threshold(denoised, 0, 255,
-                     cv.THRESH_BINARY + cv.THRESH_OTSU)[1]
-        mask[denoised < pks[0] + widths[0]] = 0
+        pks, widths, hist = get_intensity_peaks(denoised)
 
         histogram.append(hist)
+
+        # Create the mask
+        mask = np.zeros_like(frame)
+        if len(pks) >= 2: # At least one droplet present
+
+            mask = cv.threshold(denoised, 0, 255,
+                   cv.THRESH_BINARY + cv.THRESH_OTSU)[1]
+            mask[denoised < pks[0] + widths[0]] = 0
 
         # Labeling of the blobs
         num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(
@@ -204,13 +190,6 @@ def analyseVideo(path, out_dir):
 
     # plot histogram
     histogram = np.array(histogram)
-    peak_img = np.zeros_like(histogram)
-    print(len(peaks))
-    peaks = np.array(peaks)
-    for i, pks in enumerate(peaks):
-        freqs = np.floor(pks).astype(np.int32)
-        peak_img[i, freqs] = 1
-
     fig, ax = plt.subplots(1, 1)
 
     im = ax.imshow(

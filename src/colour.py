@@ -26,9 +26,9 @@ class Colour:
         Returns:
             The hex colour as a string
         """
-        r = hex(self.r)
-        g = hex(self.g)
-        b = hex(self.b)
+        r = hex(self.r)[2:]
+        g = hex(self.g)[2:]
+        b = hex(self.b)[2:]
 
         return f"#{r}{g}{b}"
 
