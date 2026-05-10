@@ -1,7 +1,4 @@
-import scipy.signal as sps
 import polars as pl
-import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
 import numpy as np
 import cv2 as cv
 import sys
@@ -11,10 +8,10 @@ from tqdm import tqdm
 from dataclasses import dataclass, asdict
 import argparse
 
-from src.colour import okabe_ito
-from src.video import *
-from src.frame_processing import *
-from src.changepoints import *
+from video import highlight_blob, draw_centroids
+from frame_processing import get_intensity_peaks
+from changepoints import find_changepoints
+from plotting import plot_hist, plot_measurements
 
 @dataclass
 class Measurement:
@@ -79,10 +76,11 @@ def analyseVideo(path, out_dir):
     frames = np.array([cap.read()[1] for i in range(frame_count)])
     gray = [cv.cvtColor(frame, cv.COLOR_BGR2GRAY) for frame in frames]
 
-    window = 7
+
+    # utility variables
+    window_size = 7
 
     histogram = []
-
     measurements = []
 
     # Centroid tracking variables
@@ -94,12 +92,10 @@ def analyseVideo(path, out_dir):
     
     peaks = []
     pks_cnt = []
-    changes = []
 
-
-    for i in tqdm(range(window//2, frame_count - window//2)):
+    for i in tqdm(range(window_size//2, frame_count - window_size//2)):
         frame = gray[i]
-        m = np.median(gray[i - window//2:i+window//2], axis=0).astype(np.uint8)
+        m = np.median(gray[i - window_size//2:i+window_size//2], axis=0).astype(np.uint8)
 
         denoised = cv.bilateralFilter(m, 9, 75, 75)
 
@@ -184,52 +180,8 @@ def analyseVideo(path, out_dir):
     # Find the touch downs and retractions
     td, rt = find_changepoints(peaks)
 
-
-    # Plot the peaks
-    fig, ax = plt.subplots(1, 1);
-    
-    ax.plot(np.arange(len(pks_cnt)), pks_cnt)
-
-    fig.savefig(f"{out_dir}/peaks.png", dpi=300)
-    
-    logger.info(f"changes: {len(changes)}")
-
     # plot histogram
-    histogram = np.array(histogram)
-    fig, ax = plt.subplots(1, 1)
-
-    im = ax.imshow(
-        histogram.T,
-        aspect = 'auto',
-        origin = 'lower',
-        cmap = 'viridis'
-    )
-
-    ax.vlines(td, 0, 255, colors="red", linestyles="--")
-    ax.vlines(rt, 0, 255, colors="lime", linestyles="--")
-
-    v1 = Line2D([0], [0], color="red", ls="--")
-    v2 = Line2D([0], [0], color="lime", ls="--")
-
-    handles, labels = ax.get_legend_handles_labels()
-    handles += [v1, v2]
-    labels  += ["touch down", "retraction"]
-
-    ax.legend(handles, labels, loc='upper right')
-
-
-    x_tick_pos = np.arange(0, frame_count, 30*fps) 
-    x_tick_lbl = (np.arange(0, frame_count, 30*fps)//fps).astype(np.uint32)
-
-    ax.set_xticks(x_tick_pos)
-    ax.set_xticklabels(x_tick_lbl)
-
-    ax.set_title("Intensity value frequency over time")
-    ax.set_xlabel("time (s)")
-    ax.set_ylabel("intensity")
-    fig.colorbar(im, ax=ax)
-    fig.savefig(f"{out_dir}/histogram.png", dpi=300)
-
+    plot_hist(np.array(histogram), td, rt, frame_count, fps, f"{out_dir}/histogram.png")
 
     logger.info("Saved video")
 
@@ -252,74 +204,6 @@ def processMeasurements(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     return df
-
-def plotMeasurements(df, cpts, path):
-    fig, axes = plt.subplots(2, 1, figsize=(10, 10))
-
-    min_area = df["area_mean"].min()
-    max_area = df["area_mean"].max()
-
-    min_intense = df["intensity_mean"].min()
-    max_intense = df["intensity_mean"].max()
-
-    for lbl in df["id"].unique():
-
-        lbl_color = okabe_ito[lbl%len(okabe_ito)].hex()
-        df_sub = df.filter(pl.col("id") == lbl)
-
-
-        legend_label = f"droplet: {lbl}"
-        # Area
-        axes[0].set_title("droplet area")
-        axes[0].set_xlabel("time (s)")
-        axes[0].set_ylabel("area (pixels)")
-        axes[0].plot(df_sub["time"], df_sub["area"], color=lbl_color, alpha=0.25)
-        axes[0].plot(
-            df_sub["time"], df_sub["area_mean"], color=lbl_color, label=legend_label
-        )
-
-        if len(cpts) > 0:
-            axes[0].vlines(
-                cpts.filter((pl.col("id") == lbl) & (pl.col("col") == "area_mean"))[
-                    "changepoints"
-                ],
-                min_area,
-                max_area,
-                color="red",
-                linestyles="dashed",
-            )
-
-
-        axes[0].legend()
-
-        # Intensity 
-        axes[1].set_title("droplet intensity")
-        axes[1].set_xlabel("time (s)")
-        axes[1].set_ylabel("average intensity (0-255)")
-        axes[1].plot(
-            df_sub["time"], df_sub["intensity"], color=lbl_color, alpha=0.25
-        )
-        axes[1].plot(
-            df_sub["time"],
-            df_sub["intensity_mean"],
-            color=lbl_color,
-            label=legend_label,
-        )
-
-        if len(cpts) > 0:
-            axes[1].vlines(
-                cpts.filter((pl.col("id") == lbl) & (pl.col("col") == "intensity_mean"))[
-                    "changepoints"
-                ],
-                min_intense,
-                max_intense,
-                color="red",
-                linestyles="dashed",
-            )
-        axes[1].legend()
-
-    fig.tight_layout()
-    fig.savefig(path)
 
 def main():
     # Setup logger
@@ -347,7 +231,7 @@ def main():
 
     cpts = [] #detectChangepoints(df, ["area_mean", "intensity_mean"])
 
-    plotMeasurements(df, cpts, f"{out_dir}/plots.png")
+    plot_measurements(df, cpts, f"{out_dir}/plots.png")
     logger.info("Saved plots")
 
 if __name__ == "__main__":
@@ -359,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument("file", help="The file path to the .avi source file")
     parser.add_argument("--log", help="The log level",choices=['info', 'debug', 'error'], default="info")
 
-    args = parser.parse_args();
+    args = parser.parse_args()
 
     # Setup logging format
     logging.basicConfig(

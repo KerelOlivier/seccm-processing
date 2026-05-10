@@ -17,3 +17,22 @@ dependencies = [
     "scipy>=1.17.1",
     "tqdm>=4.67.3",
 ]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv]
+package = true
+
+[tool.pyright]
+extraPaths = ["src"]
+
+[tool.ruff]
+src = ["src"]

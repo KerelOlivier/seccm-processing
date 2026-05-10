@@ -1,10 +1,11 @@
-from dataclasses import dataclass
-
 class Colour:
     def __init__(self, r:int, g:int, b:int):
-        if r < 0 or r > 255: raise Exception("R must be between 0 and 255")
-        if g < 0 or g > 255: raise Exception("G must be between 0 and 255")
-        if b < 0 or b > 255: raise Exception("B must be between 0 and 255")
+        if r < 0 or r > 255: 
+            raise Exception("R must be between 0 and 255")
+        if g < 0 or g > 255: 
+            raise Exception("G must be between 0 and 255")
+        if b < 0 or b > 255: 
+            raise Exception("B must be between 0 and 255")
 
         self.r = r
         self.g = g
