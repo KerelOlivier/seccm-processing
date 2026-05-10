@@ -1,6 +1,7 @@
 import scipy.signal as sps
 import polars as pl
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 import cv2 as cv
 import sys
@@ -13,6 +14,7 @@ import argparse
 from src.colour import okabe_ito
 from src.video import *
 from src.frame_processing import *
+from src.changepoints import *
 
 @dataclass
 class Measurement:
@@ -89,8 +91,10 @@ def analyseVideo(path, out_dir):
 
     # Tracks at what frame each id is made
     id2start = dict()
-
+    
+    peaks = []
     pks_cnt = []
+    changes = []
 
 
     for i in tqdm(range(window//2, frame_count - window//2)):
@@ -100,16 +104,16 @@ def analyseVideo(path, out_dir):
         denoised = cv.bilateralFilter(m, 9, 75, 75)
 
         pks, widths, hist = get_intensity_peaks(denoised)
-
+        
+        peaks.append(pks)
+        pks_cnt.append(len(pks))
         histogram.append(hist)
 
         # Create the mask
         mask = np.zeros_like(frame)
-        if len(pks) >= 2: # At least one droplet present
-
-            mask = cv.threshold(denoised, 0, 255,
-                   cv.THRESH_BINARY + cv.THRESH_OTSU)[1]
-            mask[denoised < pks[0] + widths[0]] = 0
+        mask = cv.threshold(denoised, 0, 255,
+               cv.THRESH_BINARY + cv.THRESH_OTSU)[1]
+        mask[denoised < pks[0] + widths[0]] = 0
 
         # Labeling of the blobs
         num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(
@@ -118,10 +122,6 @@ def analyseVideo(path, out_dir):
         
         # remove all labels that are not fully in frame and set them to 0
         for lbl in range(num_labels):
-            x = stats[lbl, cv.CC_STAT_LEFT]
-            y = stats[lbl, cv.CC_STAT_TOP]
-            w = stats[lbl, cv.CC_STAT_WIDTH]
-            h = stats[lbl, cv.CC_STAT_HEIGHT]
             area = stats[lbl, cv.CC_STAT_AREA]
             if area < 3000:
                 labels[labels == lbl] = 0
@@ -180,13 +180,19 @@ def analyseVideo(path, out_dir):
     cap.release()
     out.release()
 
+
+    # Find the touch downs and retractions
+    td, rt = find_changepoints(peaks)
+
+
     # Plot the peaks
     fig, ax = plt.subplots(1, 1);
     
     ax.plot(np.arange(len(pks_cnt)), pks_cnt)
 
     fig.savefig(f"{out_dir}/peaks.png", dpi=300)
-
+    
+    logger.info(f"changes: {len(changes)}")
 
     # plot histogram
     histogram = np.array(histogram)
@@ -198,6 +204,18 @@ def analyseVideo(path, out_dir):
         origin = 'lower',
         cmap = 'viridis'
     )
+
+    ax.vlines(td, 0, 255, colors="red", linestyles="--")
+    ax.vlines(rt, 0, 255, colors="lime", linestyles="--")
+
+    v1 = Line2D([0], [0], color="red", ls="--")
+    v2 = Line2D([0], [0], color="lime", ls="--")
+
+    handles, labels = ax.get_legend_handles_labels()
+    handles += [v1, v2]
+    labels  += ["touch down", "retraction"]
+
+    ax.legend(handles, labels, loc='upper right')
 
 
     x_tick_pos = np.arange(0, frame_count, 30*fps) 
